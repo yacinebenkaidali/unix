@@ -16,9 +16,15 @@ type Config struct {
 	columns []int
 }
 
+type Result struct {
+	file   string
+	result string
+	err    error
+}
+
 var doneCh = make(chan struct{})
-var results = make(chan string, 100)
-var errorCh = make(chan error)
+var resultsCh = make(chan Result, 10)
+var filesCh = make(chan string, 10)
 var wg sync.WaitGroup
 
 func main() {
@@ -43,47 +49,58 @@ func main() {
 
 	<-doneCh
 	<-doneCh
-	<-doneCh
 	close(doneCh)
 }
 
 func run(out io.Writer, cfg Config) {
+	go sendData(cfg.files)
+	wg.Add(1)
 
 	go func() {
-		for content := range results {
-			fmt.Fprintln(os.Stdout, content)
-			fmt.Fprintln(os.Stdout, "=========/==========")
+		defer wg.Done()
+		for file := range filesCh {
+			wg.Add(1)
+			go cutFileContent(file, cfg.columns, cfg.delim)
 		}
-		doneCh <- struct{}{}
 	}()
-
-	go func() {
-		for err := range errorCh {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		doneCh <- struct{}{}
-	}()
-
-	input, cleanup := getInput(cfg.files)
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	for _, in := range input {
-		wg.Add(1)
-		go cutFileContent(in, cfg.columns, cfg.delim)
-	}
+	go handleResults(out)
 
 	wg.Wait()
-	close(results)
-	close(errorCh)
+	close(resultsCh)
 	doneCh <- struct{}{}
 }
 
-func cutFileContent(in io.Reader, columns []int, delim rune) {
+func sendData(files []string) {
+	for _, file := range files {
+		filesCh <- file
+	}
+	close(filesCh)
+}
+
+func handleResults(out io.Writer) {
+	for content := range resultsCh {
+		if content.err != nil {
+			fmt.Printf("Error occured : %q\n", content.err)
+		} else {
+			fmt.Fprintf(out, "File name :%s\n", content.file)
+			fmt.Fprintf(out, "%s\n", content.result)
+		}
+		fmt.Fprintln(out, "=========/==========")
+	}
+	doneCh <- struct{}{}
+}
+
+func cutFileContent(file string, columns []int, delim rune) {
 	defer wg.Done()
 	var content strings.Builder
-	csvReader := csv.NewReader(in)
+
+	f, err := os.Open(file)
+	if err != nil {
+		resultsCh <- Result{err: err, file: file}
+		return
+	}
+
+	csvReader := csv.NewReader(f)
 	csvReader.Comma = delim
 
 	for {
@@ -92,46 +109,22 @@ func cutFileContent(in io.Reader, columns []int, delim rune) {
 			break
 		}
 		if err != nil {
-			errorCh <- err
+			resultsCh <- Result{err: err, file: file}
+			return
 		}
-		columnsContent := make([]string, 0, len(columns))
-		for _, c := range columns {
+		tmpStr := ""
+		for i, c := range columns {
 			if c < len(line) {
-				columnsContent = append(columnsContent, line[c-1])
+				tmpStr += line[c-1]
+			}
+			if i < len(columns)-1 {
+				tmpStr += string(delim)
 			}
 		}
-		content.WriteString(fmt.Sprintf("%s\n", strings.Join(columnsContent, string(delim))))
+		content.WriteString(fmt.Sprintf("%s\n", tmpStr))
 	}
-	results <- content.String()
-}
-
-func getInput(files []string) ([]io.Reader, func()) {
-	stdInfo, err := os.Stdin.Stat()
-	if err != nil {
-		errorCh <- err
+	resultsCh <- Result{
+		result: content.String(),
+		file:   file,
 	}
-	if stdInfo.Size() > 0 {
-		return []io.Reader{os.Stdin}, nil
-	}
-
-	if len(files) > 0 {
-		filesReaders := make([]io.Reader, 0, len(files))
-		filesPtrs := make([]*os.File, 0, len(files))
-
-		for _, file := range files {
-			f, err := os.Open(file)
-			if err != nil {
-				errorCh <- err
-				continue
-			}
-			filesReaders = append(filesReaders, f)
-			filesPtrs = append(filesPtrs, f)
-		}
-		return filesReaders, func() {
-			for _, file := range filesPtrs {
-				file.Close()
-			}
-		}
-	}
-	return []io.Reader{}, nil
 }
