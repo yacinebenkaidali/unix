@@ -18,6 +18,5 @@
 # vendor/
 
 # Go workspace file
-go.work
 */testdata/*
 .DS_Store
