@@ -14,6 +14,7 @@ type Config struct {
 	delim   rune
 	files   []string
 	columns []int
+	stdIn   io.Reader
 }
 
 type Result struct {
