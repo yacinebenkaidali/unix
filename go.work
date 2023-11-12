@@ -5,4 +5,5 @@ use (
 	./cut
 	./wc
 	./head
+	./cat
 )
