@@ -20,3 +20,4 @@
 # Go workspace file
 */testdata/*
 .DS_Store
+*/bin/*
