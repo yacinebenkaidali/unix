@@ -1,4 +1,4 @@
-go 1.21.3
+go 1.22.2
 
 use (
 	./uniq
@@ -6,4 +6,5 @@ use (
 	./wc
 	./head
 	./cat
+	./xargs
 )
